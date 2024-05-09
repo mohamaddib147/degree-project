@@ -2,17 +2,17 @@
 
 % Parameters
 K = 2; % Number of nodes
-modulation_type = 'BPSK'; % Choose modulation: 'BPSK', 'QPSK', '16QAM', etc.
+modulation_type = 'QPSK'; % Choose modulation: 'BPSK', 'QPSK', '16QAM', etc.
+q = 8; % Modulation states for QAM (8-QAM)
 SNR = 30; % Signal-to-noise ratio in dB
-h = [1, 0.8]; % Channel coefficients for each node
-p = [1, 1]; % Transmit power for each node
+h = [1, 0.8, 0.6, 0.4]; % Channel coefficients for each node
+p = [1, 1, 1, 1]; % Transmit power for each node
 
 % Define the desired function f and its range Rf
 f = @(x) sum(x); % Example function (sum)
 
 % Get the modulation symbols
-symbols = get_modulation_symbols(modulation_type);
-q = length(symbols);
+symbols = get_modulation_symbols(modulation_type, q);
 
 % Get the optimization results (P3/P4)
 [x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q);
@@ -31,25 +31,27 @@ disp(decoded_values);
 % Plot the constellation points and decision boundaries
 plot_constellation_and_boundaries(received_signal, s_opt, decoded_values, K, symbols, modulation_type);
 
-function symbols = get_modulation_symbols(modulation_type)
+function symbols = get_modulation_symbols(modulation_type, q)
     % Get modulation symbols based on the specified type
-
     switch modulation_type
         case 'BPSK'
-            symbols = [-1; 1];
+            symbols = pskmod(0:q-1, q);
         case 'QPSK'
-            symbols = [1+1j; 1-1j; -1+1j; -1-1j];
-        case '16QAM'
-            symbols = [-3 -1 1 3] + 1j * [-3 -1 1 3]';
-            symbols = symbols(:) / sqrt(10); % Normalized energy
+            symbols = pskmod(0:q-1, q); % 4-PSK (QPSK)
+        case 'QAM'
+            if mod(log2(q), 1) == 0 % Ensure q is a power of 2
+                symbols = qammod(0:q-1, q);
+            else
+                error('QAM requires q to be a power of 2');
+            end
         case 'FSK'
-            % Example for 2-FSK (expand as needed)
-            symbols = [exp(1j * 0), exp(1j * pi)];
+            symbols = exp(1j * (0:q-1) * 2 * pi / q); % FSK with q tones
         otherwise
             error('Unknown modulation type');
     end
+    % Normalize symbols for unit average power
+    symbols = symbols / sqrt(mean(abs(symbols).^2));
 end
-
 
 function [x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q)
     % Solve the P3/P4 optimization problem for ChannelComp
@@ -73,12 +75,12 @@ function [x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q)
     x = repmat(symbols, K, 1);
 
     % Calculate the vector s
-    s = A * x;
+    % s = A * x;
 
     % Dynamic epsilon calculation based on the function differences
     epsilon = calculate_epsilon(A, f, index_combinations);
 
-    % Construct Bi,j and γi,j matrices
+    % Construct Bi_j and γi_j matrices
     [Bi_j, gamma_i_j] = construct_bi_j_gamma(A, epsilon, f, index_combinations);
 
     % Solve Problem P3 using CVX (Convex Optimization Library)
@@ -108,7 +110,7 @@ function epsilon = calculate_epsilon(A, f, index_combinations)
 end
 
 function [Bi_j, gamma_i_j] = construct_bi_j_gamma(A, epsilon, f, index_combinations)
-    % Construct Bi,j and γi,j matrices
+    % Construct Bi_j and γi_j matrices
     M = size(A, 1);
     N = size(A, 2);
     M_pairs = nchoosek(1:M, 2);
@@ -223,8 +225,6 @@ function x_opt = solve_optimization_problem(N, Bi_j, gamma_i_j)
     end
 end
 
-
-
 function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt, s_opt, K, symbols, h, p, SNR)
     % Transmit the signals over MAC with noise and channel effects
 
@@ -242,7 +242,6 @@ function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt,
     % Simulate received signal
     received_signal = s_opt + z;
 end
-
 
 function decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, symbols, f)
     % Decode the received signals using the Voronoi diagram and MLE
@@ -267,7 +266,6 @@ function decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, 
         decoded_values(i) = expected_values(idx);
     end
 end
-
 
 function plot_constellation_and_boundaries(received_signal, s_opt, decoded_values, K, symbols, modulation_type)
     % Plot the constellation points and decision boundaries
@@ -298,4 +296,3 @@ function plot_constellation_and_boundaries(received_signal, s_opt, decoded_value
     legend({'Received', 'Constellation'});
     grid on;
 end
-
