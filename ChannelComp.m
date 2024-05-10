@@ -2,34 +2,37 @@
 
 % Parameters
 K = 2; % Number of nodes
-modulation_type = 'QPSK'; % Choose modulation: 'BPSK', 'QPSK', '16QAM', etc.
-q = 8; % Modulation states for QAM (8-QAM)
+modulation_type = 'BPSK'; % Choose modulation: 'BPSK', 'QPSK', '16QAM', etc.
 SNR = 30; % Signal-to-noise ratio in dB
-h = [1, 0.8, 0.6, 0.4]; % Channel coefficients for each node
-p = [1, 1, 1, 1]; % Transmit power for each node
-
-% Define the desired function f and its range Rf
+h = generate_channel_coefficients(K); % Generate channel coefficients for each node
+q = 2;
+p_init = ones(1, K); % Initial power allocation
 f = @(x) sum(x); % Example function (sum)
 
-% Get the modulation symbols
-symbols = get_modulation_symbols(modulation_type, q);
+% Get modulation symbols
+symbols = get_modulation_symbols(modulation_type,q);
 
-% Get the optimization results (P3/P4)
-[x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q);
+
+% Solve G-ChannelComp (P3/P4)
+[x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, symbols, q);
+
+% Solve E-ChannelComp (P6)
+[p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, symbols, h, q, f, A, gamma_i_j);
 
 % Transmission Over MAC
-% Generate the transmitted and received signals
-[transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt, s_opt, K, symbols, h, p, SNR);
+[transmitted_signal, received_signal, s_opt_e] = transmit_over_mac(x_opt, s_opt_e, K, symbols, h, p_opt, SNR);
 
-% Decode the received signals using the Voronoi diagram and MLE
-decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, symbols, f);
+% Decode signals using Voronoi diagram and MLE
+decoded_values = decode_channelcomp_voronoi(received_signal, s_opt_e, K, symbols, f);
 
 % Display decoded function values
 disp('Decoded function values:');
 disp(decoded_values);
 
-% Plot the constellation points and decision boundaries
-plot_constellation_and_boundaries(received_signal, s_opt, decoded_values, K, symbols, modulation_type);
+% Plot constellation points and decision boundaries
+plot_constellation_and_boundaries(received_signal, s_opt_e, decoded_values, K, symbols, modulation_type);
+
+%===========================================function=================================================================%
 
 function symbols = get_modulation_symbols(modulation_type, q)
     % Get modulation symbols based on the specified type
@@ -53,7 +56,7 @@ function symbols = get_modulation_symbols(modulation_type, q)
     symbols = symbols / sqrt(mean(abs(symbols).^2));
 end
 
-function [x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q)
+function [x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, symbols, q)
     % Solve the P3/P4 optimization problem for ChannelComp
 
     % Generate matrix A
@@ -88,7 +91,7 @@ function [x_opt, s_opt] = solve_channelcomp_p3_p4(K, f, symbols, q)
 
     % Calculate the resulting vector s after applying x_opt
     s_opt = A * x_opt;
-    disp('Optimized vector s:');
+    disp('Optimized vector s (G-ChannelComp):');
     disp(s_opt);
 end
 
@@ -110,7 +113,7 @@ function epsilon = calculate_epsilon(A, f, index_combinations)
 end
 
 function [Bi_j, gamma_i_j] = construct_bi_j_gamma(A, epsilon, f, index_combinations)
-    % Construct Bi_j and γi_j matrices
+    % Construct Bi,j and γi,j matrices
     M = size(A, 1);
     N = size(A, 2);
     M_pairs = nchoosek(1:M, 2);
@@ -225,6 +228,95 @@ function x_opt = solve_optimization_problem(N, Bi_j, gamma_i_j)
     end
 end
 
+function [p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, symbols, h, q, f, A, gamma_i_j)
+    % Calculate the operator Hq
+    Hq = kron(diag(h), eye(q));
+
+    % Create matrix C
+    C = A * Hq * diag(x_opt) * kron(eye(K), ones(q, 1));
+
+    % Generate index combinations
+    M = q^K;
+    num_bits = ceil(log2(q));
+    index_combinations = de2bi(0:M-1, num_bits * K, 'left-msb');
+
+    % Construct Ci_j matrices
+    Ci_j = construct_ci_j_gamma(C, index_combinations);
+
+    % Solve Problem P6 using CVX
+    p_opt = solve_p6_optimization(K, Ci_j, gamma_i_j);
+
+    % Calculate the resulting vector s after applying p_opt
+    s_opt_e = C * p_opt;
+    disp('Optimized vector s (E-ChannelComp):');
+    disp(s_opt_e);
+end
+
+function Ci_j = construct_ci_j_gamma(C, index_combinations)
+    % Construct C_{i,j} matrices
+    M = size(C, 1);
+    M_pairs = nchoosek(1:M, 2);
+    num_pairs = size(M_pairs, 1);
+
+    Ci_j = zeros(size(C, 2), size(C, 2), num_pairs);
+
+    for idx = 1:num_pairs
+        i = M_pairs(idx, 1);
+        j = M_pairs(idx, 2);
+        diff_vector = (C(i, :) - C(j, :))';
+        Ci_j(:, :, idx) = diff_vector * diff_vector';
+    end
+end
+
+
+function p_opt = solve_p6_optimization(K, Ci_j, gamma_i_j)
+    % Solve the P6 optimization problem using CVX
+    cvx_begin sdp
+        variable P(K, K) semidefinite
+        minimize(trace(P))
+        subject to
+            for idx = 1:size(Ci_j, 3)
+                trace(P * Ci_j(:, :, idx)) >= gamma_i_j(idx);
+            end
+            P >= 0;
+    cvx_end
+
+    % Check if P is rank-one
+    [U, S, ~] = svd(P);
+    rank_P = sum(diag(S) > 1e-6);
+
+    if rank_P == 1
+        % Optimal solution found
+        p_opt = U(:, 1) * sqrt(S(1, 1));
+        disp('Optimal vector p from P6:');
+        disp(p_opt);
+    else
+        % Suboptimal solution, apply Gaussian randomization
+        disp('Solution P is not rank-one, applying Gaussian randomization...');
+        num_randomizations = 10;
+        best_obj = inf;
+        best_p = zeros(K, 1);
+
+        for iter = 1:num_randomizations
+            z = randn(K, 1);
+            p_trial = U * sqrt(S) * z;
+            obj_trial = trace(p_trial' * p_trial);
+
+            if obj_trial < best_obj
+                best_obj = obj_trial;
+                best_p = p_trial;
+            end
+        end
+
+        p_opt = best_p;
+        disp('Randomized optimal vector p:');
+        disp(p_opt);
+    end
+end
+
+
+
+
 function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt, s_opt, K, symbols, h, p, SNR)
     % Transmit the signals over MAC with noise and channel effects
 
@@ -295,4 +387,8 @@ function plot_constellation_and_boundaries(received_signal, s_opt, decoded_value
     title(['Constellation Points and Decision Boundaries for ', modulation_type]);
     legend({'Received', 'Constellation'});
     grid on;
+end
+function h = generate_channel_coefficients(K)
+    % Generate random channel coefficients (between 0.5 and 1.5) for each node
+    h = 0.5 + rand(1, K);
 end
