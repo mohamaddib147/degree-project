@@ -1,29 +1,29 @@
 % ChannelComp Main Script
 
 % Parameters
-K = 2; % Number of nodes
+K = 4; % Number of nodes
 modulation_type = 'BPSK'; % Choose modulation: 'BPSK', 'QPSK', '16QAM', etc.
 SNR = 30; % Signal-to-noise ratio in dB
 h = generate_channel_coefficients(K); % Generate channel coefficients for each node
 q = 2;
 p_init = ones(1, K); % Initial power allocation
 f = @(x) sum(x); % Example function (sum)
-
+data = randi([0 q-1], K, 1); % Generate random data for each node
 % Get modulation symbols
 symbols = get_modulation_symbols(modulation_type,q);
 
-
+modulated_data = symbols(data + 1);
 % Solve G-ChannelComp (P3/P4)
-[x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, symbols, q);
+[x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, modulated_data, q);
 
 % Solve E-ChannelComp (P6)
-[p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, symbols, h, q, f, A, gamma_i_j);
+[p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, modulated_data, h, q, f, A, gamma_i_j);
 
 % Transmission Over MAC
-[transmitted_signal, received_signal, s_opt_e] = transmit_over_mac(x_opt, s_opt_e, K, symbols, h, p_opt, SNR);
+[transmitted_signal, received_signal, s_opt_e] = transmit_over_mac(x_opt, s_opt_e, K, modulated_data, h, p_opt, SNR,q);
 
 % Decode signals using Voronoi diagram and MLE
-decoded_values = decode_channelcomp_voronoi(received_signal, s_opt_e, K, symbols, f);
+decoded_values = decode_channelcomp_voronoi(received_signal, s_opt_e, K, modulated_data, f,q);
 
 % Display decoded function values
 disp('Decoded function values:');
@@ -33,7 +33,12 @@ disp(decoded_values);
 plot_constellation_and_boundaries(received_signal, s_opt_e, decoded_values, K, symbols, modulation_type);
 
 %===========================================function=================================================================%
+function h = generate_channel_coefficients(K)
+    % Generate random channel coefficients (between 0.5 and 1.5) for each node
+    % h = 0.5 + rand(1, K);
+    h = randn(K,1) + 1i*randn(K,1);% Random complex channel coeffs
 
+end
 function symbols = get_modulation_symbols(modulation_type, q)
     % Get modulation symbols based on the specified type
     switch modulation_type
@@ -56,7 +61,7 @@ function symbols = get_modulation_symbols(modulation_type, q)
     symbols = symbols / sqrt(mean(abs(symbols).^2));
 end
 
-function [x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, symbols, q)
+function [x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, modulated_data, q)
     % Solve the P3/P4 optimization problem for ChannelComp
 
     % Generate matrix A
@@ -75,7 +80,7 @@ function [x_opt, s_opt, A, gamma_i_j] = solve_channelcomp_p3_p4(K, f, symbols, q
     end
 
     % Define the modulation vector x
-    x = repmat(symbols, K, 1);
+    % x = repmat(symbols, K, 1);
 
     % Calculate the vector s
     % s = A * x;
@@ -228,7 +233,7 @@ function x_opt = solve_optimization_problem(N, Bi_j, gamma_i_j)
     end
 end
 
-function [p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, symbols, h, q, f, A, gamma_i_j)
+function [p_opt, s_opt_e] = solve_channelcomp_p6(x_opt, s_opt, K, modulated_data, h, q, f, A, gamma_i_j)
     % Calculate the operator Hq
     Hq = kron(diag(h), eye(q));
 
@@ -317,11 +322,11 @@ end
 
 
 
-function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt, s_opt, K, symbols, h, p, SNR)
+function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt, s_opt, K, modulated_data, h, p, SNR,q)
     % Transmit the signals over MAC with noise and channel effects
 
-    q = length(symbols);
-    N = length(x_opt);
+    
+    N = K*q;
     transmitted_signal = zeros(N, 1);
     for k = 1:K
         transmitted_signal((k-1)*q + 1:k*q) = h(k) * sqrt(p(k)) * x_opt((k-1)*q + 1:k*q);
@@ -335,10 +340,10 @@ function [transmitted_signal, received_signal, s_opt] = transmit_over_mac(x_opt,
     received_signal = s_opt + z;
 end
 
-function decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, symbols, f)
+function decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, modulated_data, f,q)
     % Decode the received signals using the Voronoi diagram and MLE
 
-    q = length(symbols);
+    
     M = q^K;
     num_bits = ceil(log2(q)); % Necessary bit width for each node's states
     index_combinations = de2bi(0:M-1, num_bits * K, 'left-msb');
@@ -359,11 +364,11 @@ function decoded_values = decode_channelcomp_voronoi(received_signal, s_opt, K, 
     end
 end
 
-function plot_constellation_and_boundaries(received_signal, s_opt, decoded_values, K, symbols, modulation_type)
+function plot_constellation_and_boundaries(received_signal, s_opt, decoded_values, K, modulated_data, modulation_type)
     % Plot the constellation points and decision boundaries
     
     % Generate matrix A
-    q = length(symbols);
+    q = length(modulated_data);
     M = q^K; % Total number of received signal combinations
     num_bits = ceil(log2(q)); % Necessary bit width for each node's states
     index_combinations = de2bi(0:M-1, num_bits * K, 'left-msb');
@@ -387,8 +392,4 @@ function plot_constellation_and_boundaries(received_signal, s_opt, decoded_value
     title(['Constellation Points and Decision Boundaries for ', modulation_type]);
     legend({'Received', 'Constellation'});
     grid on;
-end
-function h = generate_channel_coefficients(K)
-    % Generate random channel coefficients (between 0.5 and 1.5) for each node
-    h = 0.5 + rand(1, K);
 end
