@@ -12,24 +12,33 @@ def generate_channel_coefficients(M, sigma_h, sigma_g):
     h[1:] = np.maximum(h[1:], h[0])
     return h, g
 
+
+
 def optimize_precoding_matrix(M, h, g, c_squared, P, with_CSI):
     d_squared = cp.Variable(M - 1)
     if with_CSI:
-        objective = cp.Maximize(cp.sum(d_squared * ((h[:M-1]**2 / h[M-1]**2) * g[M-1]**2 - 2 * (h[:M-1] / h[M-1]) * g[:M-1] * g[M-1] + g[:M-1]**2)))
+        # Element-wise multiplication is correctly used here; ensure clarity and correctness
+        objective = cp.Maximize(cp.sum(cp.multiply(d_squared, ((h[:M-1]**2 / h[M-1]**2) * g[M-1]**2 - 2 * (h[:M-1] / h[M-1]) * g[:M-1] * g[M-1] + g[:M-1]**2))))
     else:
-        objective = cp.Maximize(cp.sum(d_squared * (2 * (h[:M-1]**2 / h[M-1]**2) - (np.pi / 2) * (h[:M-1] / h[M-1]) + 1)))
+        objective = cp.Maximize(cp.sum(cp.multiply(d_squared, (2 * (h[:M-1]**2 / h[M-1]**2) - (np.pi / 2) * (h[:M-1] / h[M-1]) + 1))))
+    
+    # Adjust constraints to ensure they are vectorized and correctly interpreted
     constraints = [
         d_squared <= P - (c_squared / h[:M-1]**2),
-        cp.sum(d_squared * (h[:M-1]**2 / h[M-1]**2)) <= P - (c_squared / h[M-1]**2)
+        cp.sum(cp.multiply(d_squared, (h[:M-1]**2 / h[M-1]**2))) <= P - (c_squared / h[M-1]**2)
     ]
+    
     prob = cp.Problem(objective, constraints)
     prob.solve(solver=cp.ECOS)
+    
     if prob.status not in ["infeasible", "unbounded"]:
         d_squared_value = d_squared.value
+        # Ensure non-negativity
         d_squared_value[d_squared_value < 0] = 0
         d = np.sqrt(d_squared_value)
     else:
         d = np.zeros(M - 1)
+    
     return d
 
 def create_reduced_row_echelon_form(h, M):
