@@ -77,7 +77,7 @@ def voronoi_decoder(y, modulation_vector, noise_vector, function_range):
     distances = [np.linalg.norm(y - (g_i + w_i))**2 for g_i, w_i in zip(constellation_points, noise_vector)]
     idx = np.argmin(distances)
     return function_range[idx]  # Return the value corresponding to the closest constellation point
-
+    
 # Parameters
 num_users = 2
 num_bits = 3
