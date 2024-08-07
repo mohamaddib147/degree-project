@@ -133,7 +133,7 @@ def compute_precoding_matrices(num_users, h, g, c_squared, P):
         print(f"Error in w_with_CSI calculation: {e}")
         w_with_CSI = None
 
-    return w_without_CSI, w_with_CSI
+    return w_without_CSI, w_with_CSI,A_with_CSI,A_without_CSI
 
 # Maximum Likelihood Estimator (MLE) decoder
 def maximum_likelihood_decoder(y, constellation_points, w_with_CSI, sigma_y):
@@ -191,80 +191,67 @@ SNR_dB = np.arange(0, 15, 2)
 function_name = 'sum'
 loss_factor = 1
 num_runs = 10
+
 def main():
     print('Starting simulations...')
-MSE_legitimate_avg = np.zeros(len(SNR_dB))
-MSE_eavesdropper_with_CSI_avg = np.zeros(len(SNR_dB))
-MSE_eavesdropper_without_CSI_avg = np.zeros(len(SNR_dB))
-MSE_eavesdropper_noiseless_avg = np.zeros(len(SNR_dB))
+    MSE_legitimate_avg = np.zeros(len(SNR_dB))
+    MSE_eavesdropper_with_CSI_avg = np.zeros(len(SNR_dB))
+    MSE_eavesdropper_without_CSI_avg = np.zeros(len(SNR_dB))
+    MSE_eavesdropper_noiseless_avg = np.zeros(len(SNR_dB))
 
+    for idx, snr_db in enumerate(SNR_dB):
+        print(f'Processing SNR = {snr_db} dB')
+        MSE_legitimate = np.zeros(num_runs)
+        MSE_eavesdropper_with_CSI = np.zeros(num_runs)
+        MSE_eavesdropper_without_CSI = np.zeros(num_runs)
+        MSE_eavesdropper_noiseless = np.zeros(num_runs)
 
-for idx, snr_db in enumerate(SNR_dB):
-    print(f'Processing SNR = {snr_db} dB')
-    MSE_legitimate = np.zeros(num_runs)
-    MSE_eavesdropper_with_CSI = np.zeros(num_runs)
-    MSE_eavesdropper_without_CSI = np.zeros(num_runs)
-    MSE_eavesdropper_noiseless = np.zeros(num_runs)
-    
+        for run in range(num_runs):
+            if run % 100 == 0:
+                print(f'  Run {run} of {num_runs}')
 
-    for run in range(num_runs):
-        if run % 100 == 0:
-            print(f'  Run {run} of {num_runs}')
+            # Generate channel coefficients
+            h, g = generate_channel_coefficients(num_users, sigma_h, sigma_g)
 
-        # Generate channel coefficients
-        h, g = generate_channel_coefficients(num_users, sigma_h, sigma_g)
+            # Calculate c values
+            c = np.sqrt(10**(snr_db / 10) * sigma_y / num_users)
+            c_squared = c**2
 
-        # Calculate c values
-        c = np.sqrt(10**(snr_db / 10) * sigma_y / num_users)
-        c_squared = c**2
+            # Optimize the precoding matrices and compute noise
+            w_without_CSI, w_with_CSI, A_with_CSI, A_without_CSI = compute_precoding_matrices(num_users, h, g, c_squared, P)
 
-        # Optimize the precoding matrices and compute noise
-        w_without_CSI, w_with_CSI = compute_precoding_matrices(num_users, h, g, c_squared, P)
+            # Calculate MSE
+            D, S_with_CSI, S_without_CSI, S_noiseless = calculate_MSE_new(
+                num_users, c, h, g, A_with_CSI, A_without_CSI, sigma_y, sigma_z
+            )
 
-        # Generate the precoding matrices
-        A_prime_without_CSI = create_reduced_row_echelon_form(h, num_users)
-        A_prime_with_CSI = create_reduced_row_echelon_form(h, num_users)
+            # Store MSE results
+            MSE_legitimate[run] = D
+            MSE_eavesdropper_with_CSI[run] = S_with_CSI
+            MSE_eavesdropper_without_CSI[run] = S_without_CSI
+            MSE_eavesdropper_noiseless[run] = S_noiseless
 
-        A_without_CSI = create_precoding_matrix(A_prime_without_CSI, w_without_CSI, num_users)
-        A_with_CSI = create_precoding_matrix(A_prime_with_CSI, w_with_CSI, num_users)
+        MSE_legitimate_avg[idx] = np.mean(MSE_legitimate)
+        MSE_eavesdropper_with_CSI_avg[idx] = np.mean(MSE_eavesdropper_with_CSI)
+        MSE_eavesdropper_without_CSI_avg[idx] = np.mean(MSE_eavesdropper_without_CSI)
+        MSE_eavesdropper_noiseless_avg[idx] = np.mean(MSE_eavesdropper_noiseless)
 
-        # Calculate MSE
-        D, S_with_CSI, S_without_CSI, S_noiseless = calculate_MSE_new(
-            num_users, c, h, g, A_with_CSI, A_without_CSI, sigma_y, sigma_z
-        )
+    # Plotting results
+    plt.figure()
+    plt.plot(SNR_dB, MSE_legitimate_avg, 'b-o', label='Legitimate Receiver (G-ChannelComp)')
+    plt.plot(SNR_dB, MSE_eavesdropper_with_CSI_avg, 'r-s', label='Eavesdropper with CSI')
+    plt.plot(SNR_dB, MSE_eavesdropper_without_CSI_avg, 'g-^', label='Eavesdropper without CSI')
+    plt.plot(SNR_dB, MSE_eavesdropper_noiseless_avg, 'm-*', label='Eavesdropper Noise-less')
 
-        
+    plt.xlabel('SNR (dB)')
+    plt.ylabel('Mean Squared Error (MSE)')
+    plt.title('MSE vs. SNR for Legitimate Receiver (G-ChannelComp) and Eavesdropper')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'MSE_vs_SNR_Legitimate_vs_Eavesdropper_{num_runs}_runs.png')
+    plt.show()
 
-        # Store MSE results
-        MSE_legitimate[run] = D
-        MSE_eavesdropper_with_CSI[run] = S_with_CSI
-        MSE_eavesdropper_without_CSI[run] = S_without_CSI
-        MSE_eavesdropper_noiseless[run] = S_noiseless
-        
+    print('Simulation completed.')
 
-    MSE_legitimate_avg[idx] = np.mean(MSE_legitimate)
-    MSE_eavesdropper_with_CSI_avg[idx] = np.mean(MSE_eavesdropper_with_CSI)
-    MSE_eavesdropper_without_CSI_avg[idx] = np.mean(MSE_eavesdropper_without_CSI)
-    MSE_eavesdropper_noiseless_avg[idx] = np.mean(MSE_eavesdropper_noiseless)
-    
-
-# Plotting results
-plt.figure()
-plt.plot(SNR_dB, MSE_legitimate_avg, 'b-o', label='Legitimate Receiver')
-plt.plot(SNR_dB, MSE_eavesdropper_with_CSI_avg, 'r-s', label='Eavesdropper with CSI')
-plt.plot(SNR_dB, MSE_eavesdropper_without_CSI_avg, 'g-^', label='Eavesdropper without CSI')
-plt.plot(SNR_dB, MSE_eavesdropper_noiseless_avg, 'm-*', label='Eavesdropper Noise-less')
-
-plt.xlabel('SNR (dB)')
-plt.ylabel('Mean Squared Error (MSE)')
-plt.title('MSE vs. SNR for Legitimate Receiver and Eavesdropper')
-plt.legend()
-plt.grid(True)
-plt.show()
-
-print('Simulation completed.')
 if __name__ == "__main__":
     main()
-
-
-    
